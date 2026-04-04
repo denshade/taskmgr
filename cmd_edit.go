@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"time"
 )
 
 func validateProgress(progress, steps int) error {
@@ -84,6 +85,9 @@ func editTask(r io.Reader, tasksPath string, idx1 int) error {
 			continue
 		}
 		t.Deadline = ds
+		if err := warnIfDeadlineInPast(os.Stderr, t.Deadline, time.Now()); err != nil {
+			return fmt.Errorf("deadline: %w", err)
+		}
 		break
 	}
 
@@ -116,6 +120,9 @@ func editTask(r io.Reader, tasksPath string, idx1 int) error {
 	tasks[i] = t
 	if err := saveTasks(tasksPath, tasks); err != nil {
 		return fmt.Errorf("write %s: %w", tasksPath, err)
+	}
+	if err := appendTaskEditHistory(tasksPath, time.Now(), t.Description, t.Progress, t.Steps); err != nil {
+		return fmt.Errorf("append history: %w", err)
 	}
 	fmt.Printf("Task %d edited (%d task(s) in %s).\n", idx1, len(tasks), tasksPath)
 	return nil

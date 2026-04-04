@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 )
@@ -42,4 +43,20 @@ func deadlineFromInput(line string) (string, error) {
 		return "", err
 	}
 	return d.Format(time.DateOnly), nil
+}
+
+// warnIfDeadlineInPast writes a warning to w when dateOnly (YYYY-MM-DD) names a calendar day
+// strictly before today's calendar day in now's location.
+func warnIfDeadlineInPast(w io.Writer, dateOnly string, now time.Time) error {
+	d, err := time.ParseInLocation(time.DateOnly, dateOnly, now.Location())
+	if err != nil {
+		return err
+	}
+	loc := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	end := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
+	if end.Before(today) {
+		fmt.Fprintf(w, "Warning: deadline %s is in the past (today is %s).\n", dateOnly, today.Format(time.DateOnly))
+	}
+	return nil
 }

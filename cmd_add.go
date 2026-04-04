@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func addTask(r io.Reader, tasksPath string) error {
@@ -58,6 +59,9 @@ func addTask(r io.Reader, tasksPath string) error {
 			continue
 		}
 		deadlineStr = ds
+		if err := warnIfDeadlineInPast(os.Stderr, deadlineStr, time.Now()); err != nil {
+			return fmt.Errorf("deadline: %w", err)
+		}
 		break
 	}
 
