@@ -573,6 +573,145 @@ func TestCmdList(t *testing.T) {
 	})
 }
 
+func TestLatestDeadlineDay(t *testing.T) {
+	loc := time.Local
+
+	tests := []struct {
+		name    string
+		tasks   []Task
+		want    time.Time
+		wantErr bool
+	}{
+		{
+			name:    "no deadlines",
+			tasks:   []Task{{Description: "a", Steps: 1, Deadline: ""}},
+			wantErr: true,
+		},
+		{
+			name: "single",
+			tasks: []Task{
+				{Description: "a", Steps: 1, Deadline: "2026-04-06"},
+			},
+			want: time.Date(2026, 4, 6, 0, 0, 0, 0, loc),
+		},
+		{
+			name: "max of several",
+			tasks: []Task{
+				{Description: "early", Steps: 1, Deadline: "2026-04-05"},
+				{Description: "late", Steps: 1, Deadline: "2026-04-10"},
+				{Description: "mid", Steps: 1, Deadline: "2026-04-07"},
+			},
+			want: time.Date(2026, 4, 10, 0, 0, 0, 0, loc),
+		},
+		{
+			name: "ignores empty deadline",
+			tasks: []Task{
+				{Description: "no due", Steps: 1, Deadline: ""},
+				{Description: "due", Steps: 1, Deadline: "2026-04-05"},
+			},
+			want: time.Date(2026, 4, 5, 0, 0, 0, 0, loc),
+		},
+		{
+			name:    "invalid deadline",
+			tasks:   []Task{{Description: "bad", Steps: 1, Deadline: "not-a-date"}},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := latestDeadlineDay(tt.tasks, loc)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !got.Equal(tt.want) {
+				t.Fatalf("got %v want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteViewSchedule(t *testing.T) {
+	loc := time.Local
+
+	t.Run("prints days and tasks due", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 12, 30, 0, 0, loc)
+		tasks := []Task{
+			{Description: "A", Steps: 1, Deadline: "2026-04-06"},
+			{Description: "B", Steps: 1, Deadline: "2026-04-05"},
+		}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(`
+2026-04-04
+2026-04-05  B
+2026-04-06  A`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("same day two tasks", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
+		tasks := []Task{
+			{Description: "One", Steps: 1, Deadline: "2026-04-04"},
+			{Description: "Two", Steps: 1, Deadline: "2026-04-04"},
+		}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(`
+2026-04-04  One
+2026-04-04  Two`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("ddmm deadline lands on correct calendar day", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
+		tasks := []Task{{Description: "x", Steps: 1, Deadline: "05/04/2026"}}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "2026-04-05  x") {
+			t.Fatalf("output: %q", buf.String())
+		}
+	})
+
+	t.Run("no deadlines error", func(t *testing.T) {
+		if err := writeViewSchedule(&bytes.Buffer{}, []Task{{Description: "x", Steps: 1}}, time.Now()); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("latest before today", func(t *testing.T) {
+		today := time.Date(2026, 4, 10, 0, 0, 0, 0, loc)
+		tasks := []Task{{Description: "past", Steps: 1, Deadline: "2026-04-04"}}
+		if err := writeViewSchedule(&bytes.Buffer{}, tasks, today); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestCmdView(t *testing.T) {
+	t.Run("invalid args", func(t *testing.T) {
+		if err := cmdView([]string{"-nope"}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestAddTask(t *testing.T) {
 	t.Run("saves task with required deadline", func(t *testing.T) {
 		dir := t.TempDir()
