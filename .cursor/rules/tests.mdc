@@ -1,0 +1,27 @@
+---
+description: Require automated tests for code changes
+alwaysApply: true
+---
+
+# Tests
+
+When you add or change behavior in this repo, **always add or update tests** so the change is covered.
+
+- **Go:** put tests in `*_test.go` next to the code (or in a `testdata/` layout when needed). Prefer table-driven tests for multiple cases.
+- **Run:** `go test ./...` (or the narrowest package path) and fix failures before finishing.
+- Do not merge or hand off work with only manual verification when automated tests are practical.
+
+```go
+// Example: add a case per format or edge case you support
+tests := []struct {
+	name    string
+	input   string
+	wantErr bool
+}{
+	{"iso", "2026-04-04", false},
+	{"invalid", "not-a-date", true},
+}
+for _, tt := range tests {
+	t.Run(tt.name, func(t *testing.T) { /* ... */ })
+}
+```
