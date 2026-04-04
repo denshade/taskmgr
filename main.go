@@ -19,6 +19,7 @@ const defaultTasksFile = "tasks.json"
 
 type Task struct {
 	Description string `json:"description"`
+	Progress    int    `json:"progress,omitempty"`
 	Steps       int    `json:"steps"`
 	Deadline    string `json:"deadline,omitempty"`
 }
@@ -33,8 +34,8 @@ Commands:
   help    Show this message
   add     Add a task (prompts; data in tasks.json, or -f/-file for another JSON path)
   delete  Remove a task by 1-based index (tasks.json, or -f/-file for another JSON path)
-  list    List all tasks
-  update  Update a task
+  list    List all tasks (tasks.json, or -f/-file for another JSON path)
+  update  Edit a task by 1-based index (prompts; Enter keeps each field; -f/-file for JSON path)
   view    View a single task`)
 }
 
@@ -111,8 +112,9 @@ func readLine(r *bufio.Reader) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-func parseAddArgs(args []string) (tasksPath string, err error) {
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+// parseTasksFilePathArgs parses -f/-file for commands that only need a tasks JSON path.
+func parseTasksFilePathArgs(args []string) (tasksPath string, err error) {
+	fs := flag.NewFlagSet("file", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	path := defaultTasksFile
 	fs.StringVar(&path, "f", defaultTasksFile, "path to tasks JSON file")
@@ -128,6 +130,10 @@ func parseAddArgs(args []string) (tasksPath string, err error) {
 		return "", errors.New("tasks file path is empty")
 	}
 	return filepath.Clean(path), nil
+}
+
+func parseAddArgs(args []string) (tasksPath string, err error) {
+	return parseTasksFilePathArgs(args)
 }
 
 // parseDeleteArgs returns the tasks file path and a 1-based task index.
@@ -170,6 +176,16 @@ func parseDeleteArgs(args []string) (tasksPath string, index1 int, err error) {
 	return path, n, nil
 }
 
+func validateProgress(progress, steps int) error {
+	if progress < 0 {
+		return errors.New("progress cannot be negative")
+	}
+	if progress > steps {
+		return fmt.Errorf("progress (%d) cannot exceed #steps (%d)", progress, steps)
+	}
+	return nil
+}
+
 func cmdDelete(args []string) error {
 	tasksPath, idx1, err := parseDeleteArgs(args)
 	if err != nil {
@@ -197,18 +213,51 @@ func cmdDelete(args []string) error {
 	return nil
 }
 
-func cmdAdd(args []string) error {
-	tasksPath, err := parseAddArgs(args)
+func writeTaskList(w io.Writer, tasks []Task) {
+	if len(tasks) == 0 {
+		fmt.Fprintln(w, "No tasks.")
+		return
+	}
+	for i, t := range tasks {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		fmt.Fprintf(w, "Description: %s\n", t.Description)
+		fmt.Fprintf(w, "Current progress: %d\n", t.Progress)
+		fmt.Fprintf(w, "#steps: %d\n", t.Steps)
+		deadline := t.Deadline
+		if deadline == "" {
+			deadline = "(none)"
+		}
+		fmt.Fprintf(w, "Deadline: %s\n", deadline)
+	}
+}
+
+func writeTasksFromPath(w io.Writer, tasksPath string) error {
+	tasks, err := loadTasks(tasksPath)
 	if err != nil {
 		return err
 	}
+	writeTaskList(w, tasks)
+	return nil
+}
 
-	r := bufio.NewReader(os.Stdin)
+func cmdList(args []string) error {
+	tasksPath, err := parseTasksFilePathArgs(args)
+	if err != nil {
+		return err
+	}
+	return writeTasksFromPath(os.Stdout, tasksPath)
+}
+
+func addTask(r io.Reader, tasksPath string) error {
+	br := bufio.NewReader(r)
 
 	var desc string
+	var err error
 	for desc == "" {
 		fmt.Print("Description: ")
-		desc, err = readLine(r)
+		desc, err = readLine(br)
 		if err != nil {
 			return fmt.Errorf("read description: %w", err)
 		}
@@ -220,7 +269,7 @@ func cmdAdd(args []string) error {
 	var steps int
 	for {
 		fmt.Print("#steps: ")
-		line, err := readLine(r)
+		line, err := readLine(br)
 		if err != nil {
 			return fmt.Errorf("read #steps: %w", err)
 		}
@@ -235,14 +284,18 @@ func cmdAdd(args []string) error {
 
 	var deadlineStr string
 	for {
-		fmt.Print("Deadline (optional, leave blank for none): ")
-		line, err := readLine(r)
+		fmt.Print("Deadline (YYYY-MM-DD or dd/mm/yyyy): ")
+		line, err := readLine(br)
 		if err != nil {
 			return fmt.Errorf("read deadline: %w", err)
 		}
 		ds, err := deadlineFromInput(line)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
+			continue
+		}
+		if ds == "" {
+			fmt.Fprintln(os.Stderr, "Deadline is required.")
 			continue
 		}
 		deadlineStr = ds
@@ -265,6 +318,124 @@ func cmdAdd(args []string) error {
 	return nil
 }
 
+func cmdAdd(args []string) error {
+	tasksPath, err := parseAddArgs(args)
+	if err != nil {
+		return err
+	}
+	return addTask(os.Stdin, tasksPath)
+}
+
+func updateTask(r io.Reader, tasksPath string, idx1 int) error {
+	br := bufio.NewReader(r)
+	tasks, err := loadTasks(tasksPath)
+	if err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		return fmt.Errorf("no tasks in %s", tasksPath)
+	}
+	i := idx1 - 1
+	if i >= len(tasks) {
+		return fmt.Errorf("no task at index %d (%d task(s) in %s)", idx1, len(tasks), tasksPath)
+	}
+	t := tasks[i]
+
+	fmt.Printf("Description[%q]: ", t.Description)
+	line, err := readLine(br)
+	if err != nil {
+		return fmt.Errorf("read description: %w", err)
+	}
+	if line != "" {
+		t.Description = line
+	}
+
+	for {
+		fmt.Printf("#steps[%d]: ", t.Steps)
+		line, err := readLine(br)
+		if err != nil {
+			return fmt.Errorf("read #steps: %w", err)
+		}
+		if line == "" {
+			break
+		}
+		n, err := strconv.Atoi(line)
+		if err != nil || n <= 0 {
+			fmt.Fprintln(os.Stderr, "#steps must be a positive integer.")
+			continue
+		}
+		t.Steps = n
+		break
+	}
+
+	for {
+		if t.Deadline == "" {
+			fmt.Print(`Deadline["(none)"]: `)
+		} else {
+			fmt.Printf("Deadline[%q]: ", t.Deadline)
+		}
+		line, err := readLine(br)
+		if err != nil {
+			return fmt.Errorf("read deadline: %w", err)
+		}
+		if line == "" {
+			break
+		}
+		ds, err := deadlineFromInput(line)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			continue
+		}
+		if ds == "" {
+			fmt.Fprintln(os.Stderr, "Deadline is required (enter a date, or press Enter to keep the current value).")
+			continue
+		}
+		t.Deadline = ds
+		break
+	}
+
+	for {
+		fmt.Printf("Current progress[%d]: ", t.Progress)
+		line, err := readLine(br)
+		if err != nil {
+			return fmt.Errorf("read progress: %w", err)
+		}
+		if line == "" {
+			if err := validateProgress(t.Progress, t.Steps); err != nil {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				continue
+			}
+			break
+		}
+		p, err := strconv.Atoi(line)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Current progress must be an integer.")
+			continue
+		}
+		if err := validateProgress(p, t.Steps); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			continue
+		}
+		t.Progress = p
+		break
+	}
+
+	tasks[i] = t
+	if err := saveTasks(tasksPath, tasks); err != nil {
+		return fmt.Errorf("write %s: %w", tasksPath, err)
+	}
+	fmt.Printf("Task %d updated (%d task(s) in %s).\n", idx1, len(tasks), tasksPath)
+	return nil
+}
+
+func cmdUpdate(args []string) error {
+	tasksPath, idx1, err := parseDeleteArgs(args)
+	if err != nil {
+		return err
+	}
+	return updateTask(os.Stdin, tasksPath, idx1)
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		printHelp()
@@ -282,6 +453,16 @@ func main() {
 	case "delete":
 		if err := cmdDelete(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "delete: %v\n", err)
+			os.Exit(1)
+		}
+	case "list":
+		if err := cmdList(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "list: %v\n", err)
+			os.Exit(1)
+		}
+	case "update":
+		if err := cmdUpdate(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "update: %v\n", err)
 			os.Exit(1)
 		}
 	default:

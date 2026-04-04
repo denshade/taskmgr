@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -172,7 +173,7 @@ func TestReadLine(t *testing.T) {
 	}
 }
 
-func TestParseAddArgs(t *testing.T) {
+func TestParseTasksFilePathArgs(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "other-tasks.json")
 
 	tests := []struct {
@@ -193,7 +194,7 @@ func TestParseAddArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseAddArgs(tt.args)
+			got, err := parseTasksFilePathArgs(tt.args)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("expected error")
@@ -256,6 +257,183 @@ func TestParseDeleteArgs(t *testing.T) {
 	}
 }
 
+func TestValidateProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		progress int
+		steps    int
+		wantErr  bool
+	}{
+		{"zero steps zero progress", 0, 1, false},
+		{"at cap", 5, 5, false},
+		{"below cap", 2, 5, false},
+		{"negative", -1, 5, true},
+		{"above steps", 6, 5, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateProgress(tt.progress, tt.steps)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestUpdateTask(t *testing.T) {
+	t.Run("enter keeps all fields", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		start := []Task{
+			{Description: "Bananas", Steps: 3, Progress: 1, Deadline: "2026-01-01"},
+			{Description: "other", Steps: 1, Deadline: "2026-02-01"},
+		}
+		if err := saveTasks(path, start); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("\n\n\n\n")
+		if err := updateTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0] != start[0] || got[1] != start[1] {
+			t.Fatalf("got %+v %+v want %+v %+v", got[0], got[1], start[0], start[1])
+		}
+	})
+
+	t.Run("changes description and progress", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "old", Steps: 5, Progress: 0, Deadline: "2026-03-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("new desc\n\n\n4\n")
+		if err := updateTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Description != "new desc" || got[0].Progress != 4 || got[0].Steps != 5 {
+			t.Fatalf("got %+v", got[0])
+		}
+	})
+
+	t.Run("progress equal to steps", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "x", Steps: 2, Deadline: "2026-03-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("\n\n\n2\n")
+		if err := updateTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Progress != 2 {
+			t.Fatalf("progress got %d", got[0].Progress)
+		}
+	})
+
+	t.Run("empty file error", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := updateTask(strings.NewReader("\n\n\n\n"), path, 1); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("out of range index", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "only", Steps: 1, Deadline: "2026-01-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := updateTask(strings.NewReader("\n\n\n\n"), path, 9); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("reducing steps requires valid progress", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "x", Steps: 5, Progress: 4, Deadline: "2026-01-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("\n2\n\n\n2\n")
+		if err := updateTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Steps != 2 || got[0].Progress != 2 {
+			t.Fatalf("got %+v", got[0])
+		}
+	})
+
+	t.Run("rejects negative progress then accepts", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "only", Steps: 3, Deadline: "2026-01-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("\n\n\n-1\n0\n")
+		if err := updateTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Progress != 0 {
+			t.Fatalf("progress got %d", got[0].Progress)
+		}
+	})
+
+	t.Run("rejects progress over steps then accepts", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "only", Steps: 2, Deadline: "2026-01-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("\n\n\n9\n1\n")
+		if err := updateTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Progress != 1 {
+			t.Fatalf("progress got %d", got[0].Progress)
+		}
+	})
+}
+
+func TestCmdUpdate(t *testing.T) {
+	t.Run("too many positionals fails before stdin", func(t *testing.T) {
+		if err := cmdUpdate([]string{"1", "2"}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestCmdDelete(t *testing.T) {
 	t.Run("removes task and rewrites file", func(t *testing.T) {
 		dir := t.TempDir()
@@ -307,6 +485,147 @@ func TestCmdDelete(t *testing.T) {
 		}
 		if err := cmdDelete([]string{"-f", path, "9"}); err == nil {
 			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestWriteTaskList(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		var buf bytes.Buffer
+		writeTaskList(&buf, nil)
+		if got := strings.TrimSpace(buf.String()); got != "No tasks." {
+			t.Fatalf("got %q", got)
+		}
+	})
+
+	t.Run("one task with deadline", func(t *testing.T) {
+		var buf bytes.Buffer
+		writeTaskList(&buf, []Task{
+			{Description: "Do thing", Progress: 1, Steps: 3, Deadline: "2026-04-06"},
+		})
+		want := strings.TrimSpace(`
+Description: Do thing
+Current progress: 1
+#steps: 3
+Deadline: 2026-04-06`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("two tasks second has no deadline", func(t *testing.T) {
+		var buf bytes.Buffer
+		writeTaskList(&buf, []Task{
+			{Description: "a", Progress: 0, Steps: 2, Deadline: "2026-01-01"},
+			{Description: "b", Progress: 2, Steps: 2, Deadline: ""},
+		})
+		want := strings.TrimSpace(`
+Description: a
+Current progress: 0
+#steps: 2
+Deadline: 2026-01-01
+
+Description: b
+Current progress: 2
+#steps: 2
+Deadline: (none)`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+}
+
+func TestWriteTasksFromPath(t *testing.T) {
+	t.Run("prints tasks from file", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{
+			{Description: "x", Progress: 0, Steps: 1, Deadline: "2026-05-01"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err := writeTasksFromPath(&buf, path); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(buf.String(), "Description: x") {
+			t.Fatalf("output: %q", buf.String())
+		}
+	})
+
+	t.Run("bad json", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "bad.json")
+		if err := os.WriteFile(path, []byte("{"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeTasksFromPath(&bytes.Buffer{}, path); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestCmdList(t *testing.T) {
+	t.Run("invalid args", func(t *testing.T) {
+		if err := cmdList([]string{"-nope"}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestAddTask(t *testing.T) {
+	t.Run("saves task with required deadline", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		in := strings.NewReader("Buy milk\n2\n2026-06-01\n")
+		if err := addTask(in, path); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("len got %d want 1", len(got))
+		}
+		want := Task{Description: "Buy milk", Steps: 2, Deadline: "2026-06-01"}
+		if got[0] != want {
+			t.Fatalf("got %+v want %+v", got[0], want)
+		}
+	})
+
+	t.Run("rejects empty deadline then accepts", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		in := strings.NewReader("Do thing\n1\n\n04/04/2026\n")
+		if err := addTask(in, path); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("len got %d want 1", len(got))
+		}
+		if got[0].Deadline != "2026-04-04" {
+			t.Fatalf("deadline got %q", got[0].Deadline)
+		}
+	})
+
+	t.Run("rejects invalid deadline then accepts", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		in := strings.NewReader("x\n1\nnot-a-date\n2026-12-31\n")
+		if err := addTask(in, path); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Deadline != "2026-12-31" {
+			t.Fatalf("deadline got %q", got[0].Deadline)
 		}
 	})
 }
