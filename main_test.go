@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -652,8 +653,8 @@ func TestWriteViewSchedule(t *testing.T) {
 		}
 		want := strings.TrimSpace(`
 2026-04-04
-2026-04-05  B
-2026-04-06  A`)
+2026-04-05  B [1]
+2026-04-06  A [1]`)
 		if got := strings.TrimSpace(buf.String()); got != want {
 			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 		}
@@ -670,8 +671,8 @@ func TestWriteViewSchedule(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := strings.TrimSpace(`
-2026-04-04  One
-2026-04-04  Two`)
+2026-04-04  One [1]
+2026-04-04  Two [1]`)
 		if got := strings.TrimSpace(buf.String()); got != want {
 			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 		}
@@ -684,7 +685,7 @@ func TestWriteViewSchedule(t *testing.T) {
 		if err := writeViewSchedule(&buf, tasks, today); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(buf.String(), "2026-04-05  x") {
+		if !strings.Contains(buf.String(), "2026-04-05  x [1]") {
 			t.Fatalf("output: %q", buf.String())
 		}
 	})
@@ -702,6 +703,102 @@ func TestWriteViewSchedule(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+
+	t.Run("interpolates steps across span skips intermediate days", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+		tasks := []Task{{Description: "bananas", Steps: 3, Deadline: "2026-04-06"}}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(`
+2026-04-01  bananas [1]
+2026-04-02
+2026-04-03  bananas [2]
+2026-04-04
+2026-04-05
+2026-04-06  bananas [3]`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("many steps uses cumulative targets one line per day", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+		tasks := []Task{{Description: "book", Steps: 300, Deadline: "2026-04-30"}}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+		var bookLines []string
+		seenDay := make(map[string]bool)
+		for _, line := range lines {
+			line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+			if !strings.Contains(line, "book [") {
+				continue
+			}
+			bookLines = append(bookLines, line)
+			day := strings.Fields(line)[0]
+			if seenDay[day] {
+				t.Fatalf("duplicate day for book: %s", line)
+			}
+			seenDay[day] = true
+		}
+		if len(bookLines) != 30 {
+			t.Fatalf("want 30 book lines, got %d", len(bookLines))
+		}
+		if want := "2026-04-01  book [10]"; bookLines[0] != want {
+			t.Fatalf("first line got %q want %q", bookLines[0], want)
+		}
+		if want := "2026-04-30  book [300]"; bookLines[len(bookLines)-1] != want {
+			t.Fatalf("last line got %q want %q", bookLines[len(bookLines)-1], want)
+		}
+	})
+
+	t.Run("more steps than days cumulative without same-day duplicates", func(t *testing.T) {
+		byDay := make(map[string][]string)
+		start := time.Date(2026, 1, 1, 0, 0, 0, 0, loc)
+		appendTaskSchedule(byDay, "book", 10, 5, start)
+		if len(byDay) != 5 {
+			t.Fatalf("want 5 distinct days, got %d: %#v", len(byDay), byDay)
+		}
+		for i := 0; i < 5; i++ {
+			d := start.AddDate(0, 0, i).Format(time.DateOnly)
+			entries := byDay[d]
+			if len(entries) != 1 {
+				t.Fatalf("day %s: want 1 entry, got %v", d, entries)
+			}
+			want := fmt.Sprintf("book [%d]", (i+1)*2)
+			if entries[0] != want {
+				t.Fatalf("day %s: got %q want %q", d, entries[0], want)
+			}
+		}
+	})
+}
+
+func TestMilestoneDayOffset(t *testing.T) {
+	tests := []struct {
+		name   string
+		k      int
+		steps  int
+		dDays  int
+		wantOff int
+	}{
+		{"3 steps 6 days k1", 1, 3, 6, 0},
+		{"3 steps 6 days k2", 2, 3, 6, 2},
+		{"3 steps 6 days k3", 3, 3, 6, 5},
+		{"1 step any span last day", 1, 1, 6, 5},
+		{"2 steps 5 days", 2, 2, 5, 4},
+		{"single day", 1, 3, 1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := milestoneDayOffset(tt.k, tt.steps, tt.dDays); got != tt.wantOff {
+				t.Fatalf("got %d want %d", got, tt.wantOff)
+			}
+		})
+	}
 }
 
 func TestCmdView(t *testing.T) {
