@@ -34,7 +34,7 @@ func parseAddArgs(args []string) (tasksPath string, err error) {
 	return parseTasksFilePathArgs(args)
 }
 
-// parseDeleteArgs returns the tasks file path and a 1-based task index.
+// parseDeleteArgs returns the tasks file path and a 1-based task index (delete and edit).
 func parseDeleteArgs(args []string) (tasksPath string, index1 int, err error) {
 	path := defaultTasksFile
 	var positionals []string

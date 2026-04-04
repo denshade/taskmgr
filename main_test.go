@@ -5,12 +5,26 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestHelpText(t *testing.T) {
+	s := helpText()
+	if !strings.HasPrefix(s, "deadline ") {
+		t.Fatalf("want title starting with app name, got first line %q", strings.SplitN(s, "\n", 2)[0])
+	}
+	if !strings.Contains(s, "deadline <command>") {
+		t.Fatalf("usage line should name binary deadline, got substring check failed")
+	}
+	if strings.Contains(s, "taskmgr") {
+		t.Fatal("help should not reference old app name taskmgr")
+	}
+}
 
 func TestParseDeadline(t *testing.T) {
 	loc := time.Local
@@ -174,6 +188,21 @@ func TestReadLine(t *testing.T) {
 	}
 }
 
+func TestReadLine_EOFWithPartialLine(t *testing.T) {
+	r := bufio.NewReader(strings.NewReader("no newline"))
+	got, err := readLine(r)
+	if err != nil {
+		t.Fatalf("got err %v want nil for partial line before EOF", err)
+	}
+	if got != "no newline" {
+		t.Fatalf("got %q", got)
+	}
+	_, err = readLine(r)
+	if err != io.EOF {
+		t.Fatalf("second read: got %v want EOF", err)
+	}
+}
+
 func TestParseTasksFilePathArgs(t *testing.T) {
 	custom := filepath.Join(t.TempDir(), "other-tasks.json")
 
@@ -288,7 +317,7 @@ func TestValidateProgress(t *testing.T) {
 	}
 }
 
-func TestUpdateTask(t *testing.T) {
+func TestEditTask(t *testing.T) {
 	t.Run("enter keeps all fields", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "tasks.json")
@@ -300,7 +329,7 @@ func TestUpdateTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		in := strings.NewReader("\n\n\n\n")
-		if err := updateTask(in, path, 1); err != nil {
+		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
 		got, err := loadTasks(path)
@@ -319,7 +348,7 @@ func TestUpdateTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		in := strings.NewReader("new desc\n\n\n4\n")
-		if err := updateTask(in, path, 1); err != nil {
+		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
 		got, err := loadTasks(path)
@@ -338,7 +367,7 @@ func TestUpdateTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		in := strings.NewReader("\n\n\n2\n")
-		if err := updateTask(in, path, 1); err != nil {
+		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
 		got, err := loadTasks(path)
@@ -353,7 +382,7 @@ func TestUpdateTask(t *testing.T) {
 	t.Run("empty file error", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "tasks.json")
-		if err := updateTask(strings.NewReader("\n\n\n\n"), path, 1); err == nil {
+		if err := editTask(strings.NewReader("\n\n\n\n"), path, 1); err == nil {
 			t.Fatal("expected error")
 		}
 	})
@@ -364,7 +393,7 @@ func TestUpdateTask(t *testing.T) {
 		if err := saveTasks(path, []Task{{Description: "only", Steps: 1, Deadline: "2026-01-01"}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := updateTask(strings.NewReader("\n\n\n\n"), path, 9); err == nil {
+		if err := editTask(strings.NewReader("\n\n\n\n"), path, 9); err == nil {
 			t.Fatal("expected error")
 		}
 	})
@@ -376,7 +405,7 @@ func TestUpdateTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		in := strings.NewReader("\n2\n\n\n2\n")
-		if err := updateTask(in, path, 1); err != nil {
+		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
 		got, err := loadTasks(path)
@@ -395,7 +424,7 @@ func TestUpdateTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		in := strings.NewReader("\n\n\n-1\n0\n")
-		if err := updateTask(in, path, 1); err != nil {
+		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
 		got, err := loadTasks(path)
@@ -414,7 +443,7 @@ func TestUpdateTask(t *testing.T) {
 			t.Fatal(err)
 		}
 		in := strings.NewReader("\n\n\n9\n1\n")
-		if err := updateTask(in, path, 1); err != nil {
+		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
 		got, err := loadTasks(path)
@@ -427,9 +456,9 @@ func TestUpdateTask(t *testing.T) {
 	})
 }
 
-func TestCmdUpdate(t *testing.T) {
+func TestCmdEdit(t *testing.T) {
 	t.Run("too many positionals fails before stdin", func(t *testing.T) {
-		if err := cmdUpdate([]string{"1", "2"}); err == nil {
+		if err := cmdEdit([]string{"1", "2"}); err == nil {
 			t.Fatal("expected error")
 		}
 	})
@@ -505,6 +534,7 @@ func TestWriteTaskList(t *testing.T) {
 			{Description: "Do thing", Progress: 1, Steps: 3, Deadline: "2026-04-06"},
 		})
 		want := strings.TrimSpace(`
+Index: 1
 Description: Do thing
 Current progress: 1
 #steps: 3
@@ -521,11 +551,13 @@ Deadline: 2026-04-06`)
 			{Description: "b", Progress: 2, Steps: 2, Deadline: ""},
 		})
 		want := strings.TrimSpace(`
+Index: 1
 Description: a
 Current progress: 0
 #steps: 2
 Deadline: 2026-01-01
 
+Index: 2
 Description: b
 Current progress: 2
 #steps: 2
@@ -549,8 +581,9 @@ func TestWriteTasksFromPath(t *testing.T) {
 		if err := writeTasksFromPath(&buf, path); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(buf.String(), "Description: x") {
-			t.Fatalf("output: %q", buf.String())
+		out := buf.String()
+		if !strings.Contains(out, "Index: 1") || !strings.Contains(out, "Description: x") {
+			t.Fatalf("output: %q", out)
 		}
 	})
 
@@ -723,6 +756,63 @@ func TestWriteViewSchedule(t *testing.T) {
 		}
 	})
 
+	t.Run("progress skips finished milestones only remaining interpolated", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+		tasks := []Task{{Description: "bananas", Steps: 3, Progress: 1, Deadline: "2026-04-06"}}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(`
+2026-04-01  bananas [2]
+2026-04-02
+2026-04-03
+2026-04-04
+2026-04-05
+2026-04-06  bananas [3]`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("one step left places single checkpoint on deadline", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+		tasks := []Task{{Description: "almost", Steps: 10, Progress: 9, Deadline: "2026-04-06"}}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(`
+2026-04-01
+2026-04-02
+2026-04-03
+2026-04-04
+2026-04-05
+2026-04-06  almost [10]`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
+	t.Run("finished task adds no schedule lines", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
+		tasks := []Task{
+			{Description: "done", Steps: 3, Progress: 3, Deadline: "2026-04-06"},
+			{Description: "todo", Steps: 1, Deadline: "2026-04-06"},
+		}
+		if err := writeViewSchedule(&buf, tasks, today); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSpace(`
+2026-04-04
+2026-04-05
+2026-04-06  todo [1]`)
+		if got := strings.TrimSpace(buf.String()); got != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+		}
+	})
+
 	t.Run("many steps uses cumulative targets one line per day", func(t *testing.T) {
 		var buf bytes.Buffer
 		today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
@@ -759,7 +849,7 @@ func TestWriteViewSchedule(t *testing.T) {
 	t.Run("more steps than days cumulative without same-day duplicates", func(t *testing.T) {
 		byDay := make(map[string][]string)
 		start := time.Date(2026, 1, 1, 0, 0, 0, 0, loc)
-		appendTaskSchedule(byDay, "book", 10, 5, start)
+		appendTaskSchedule(byDay, "book", 10, 0, 5, start)
 		if len(byDay) != 5 {
 			t.Fatalf("want 5 distinct days, got %d: %#v", len(byDay), byDay)
 		}
@@ -770,6 +860,24 @@ func TestWriteViewSchedule(t *testing.T) {
 				t.Fatalf("day %s: want 1 entry, got %v", d, entries)
 			}
 			want := fmt.Sprintf("book [%d]", (i+1)*2)
+			if entries[0] != want {
+				t.Fatalf("day %s: got %q want %q", d, entries[0], want)
+			}
+		}
+	})
+
+	t.Run("cumulative spreads only remaining from current progress", func(t *testing.T) {
+		byDay := make(map[string][]string)
+		start := time.Date(2026, 1, 1, 0, 0, 0, 0, loc)
+		appendTaskSchedule(byDay, "book", 10, 4, 5, start)
+		wants := []int{6, 7, 8, 9, 10}
+		for i := 0; i < 5; i++ {
+			d := start.AddDate(0, 0, i).Format(time.DateOnly)
+			entries := byDay[d]
+			if len(entries) != 1 {
+				t.Fatalf("day %s: want 1 entry, got %v", d, entries)
+			}
+			want := fmt.Sprintf("book [%d]", wants[i])
 			if entries[0] != want {
 				t.Fatalf("day %s: got %q want %q", d, entries[0], want)
 			}

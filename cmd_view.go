@@ -49,19 +49,27 @@ func milestoneDayOffset(k, steps, dDays int) int {
 }
 
 // appendTaskSchedule adds view lines for one task into byDay. Keys are YYYY-MM-DD in loc.
-// If steps > dDays, targets are cumulative (ceil) through the span—e.g. 300 steps in 30 days
-// yields [10], [20], … [300] on distinct emissions, at most one line per calendar day.
-// Otherwise each unit step gets its own interpolated day (steps ≤ dDays).
-func appendTaskSchedule(byDay map[string][]string, desc string, steps, dDays int, start time.Time) {
+// Only work left (steps - progress) is scheduled; labels [n] are still absolute step totals.
+// If remaining work > dDays, targets are cumulative (ceil) from current progress to steps—e.g.
+// 300 steps with 0 progress in 30 days yields [10], [20], … [300].
+// Otherwise each remaining milestone is placed on an interpolated day (remaining ≤ dDays).
+func appendTaskSchedule(byDay map[string][]string, desc string, steps, progress, dDays int, start time.Time) {
 	if dDays < 1 {
 		return
 	}
 	if steps < 1 {
 		steps = 1
 	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress >= steps {
+		return
+	}
+	rem := steps - progress
 	loc := start.Location()
-	if steps > dDays {
-		prev := 0
+	if rem > dDays {
+		prev := progress
 		for off := 0; off < dDays; off++ {
 			d := off + 1
 			var target int
@@ -71,7 +79,7 @@ func appendTaskSchedule(byDay map[string][]string, desc string, steps, dDays int
 				}
 				target = steps
 			} else {
-				target = (d*steps + dDays - 1) / dDays // ceil(d*steps/dDays)
+				target = progress + (d*rem+dDays-1)/dDays // progress + ceil(d*rem/dDays)
 				if target <= prev {
 					continue
 				}
@@ -83,8 +91,9 @@ func appendTaskSchedule(byDay map[string][]string, desc string, steps, dDays int
 		}
 		return
 	}
-	for k := 1; k <= steps; k++ {
-		off := milestoneDayOffset(k, steps, dDays)
+	for k := progress + 1; k <= steps; k++ {
+		j := k - progress
+		off := milestoneDayOffset(j, rem, dDays)
 		day := start.AddDate(0, 0, off)
 		key := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc).Format(time.DateOnly)
 		byDay[key] = append(byDay[key], fmt.Sprintf("%s [%d]", desc, k))
@@ -93,8 +102,8 @@ func appendTaskSchedule(byDay map[string][]string, desc string, steps, dDays int
 
 // writeViewSchedule prints each calendar day from today through lastDeadline (inclusive): a line "YYYY-MM-DD"
 // when nothing is scheduled, or one line per scheduled checkpoint "YYYY-MM-DD  <description> [n]".
-// When #steps is greater than the number of days until the deadline, n is the cumulative amount due by
-// that day (spread with ceil). Otherwise n is the 1..steps milestone index on interpolated days.
+// When remaining steps (#steps − current progress) exceed the days until the deadline, n is the cumulative
+// total due by that day (spread with ceil). Otherwise n is each absolute milestone still to reach, on interpolated days.
 func writeViewSchedule(w io.Writer, tasks []Task, today time.Time) error {
 	loc := today.Location()
 	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc)
@@ -123,7 +132,7 @@ func writeViewSchedule(w io.Writer, tasks []Task, today time.Time) error {
 			steps = 1
 		}
 		dDays := int(endDay.Sub(start)/(24*time.Hour)) + 1
-		appendTaskSchedule(byDay, t.Description, steps, dDays, start)
+		appendTaskSchedule(byDay, t.Description, steps, t.Progress, dDays, start)
 	}
 	for d := start; !d.After(last); d = d.AddDate(0, 0, 1) {
 		key := d.Format(time.DateOnly)

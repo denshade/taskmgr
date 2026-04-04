@@ -19,7 +19,7 @@ func validateProgress(progress, steps int) error {
 	return nil
 }
 
-func updateTask(r io.Reader, tasksPath string, idx1 int) error {
+func editTask(r io.Reader, tasksPath string, idx1 int) error {
 	br := bufio.NewReader(r)
 	tasks, err := loadTasks(tasksPath)
 	if err != nil {
@@ -117,14 +117,14 @@ func updateTask(r io.Reader, tasksPath string, idx1 int) error {
 	if err := saveTasks(tasksPath, tasks); err != nil {
 		return fmt.Errorf("write %s: %w", tasksPath, err)
 	}
-	fmt.Printf("Task %d updated (%d task(s) in %s).\n", idx1, len(tasks), tasksPath)
+	fmt.Printf("Task %d edited (%d task(s) in %s).\n", idx1, len(tasks), tasksPath)
 	return nil
 }
 
-func cmdUpdate(args []string) error {
+func cmdEdit(args []string) error {
 	tasksPath, idx1, err := parseDeleteArgs(args)
 	if err != nil {
 		return err
 	}
-	return updateTask(os.Stdin, tasksPath, idx1)
+	return editTask(os.Stdin, tasksPath, idx1)
 }

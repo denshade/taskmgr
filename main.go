@@ -7,41 +7,20 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		printHelp()
+		runShell()
 		return
 	}
 
-	switch os.Args[1] {
-	case "help", "-h", "--help":
-		printHelp()
-	case "add":
-		if err := cmdAdd(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "add: %v\n", err)
+	cmd := os.Args[1]
+	args := os.Args[2:]
+	if handled, err := runCLICommand(cmd, args); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", cmd, err)
 			os.Exit(1)
 		}
-	case "delete":
-		if err := cmdDelete(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "delete: %v\n", err)
-			os.Exit(1)
-		}
-	case "list":
-		if err := cmdList(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "list: %v\n", err)
-			os.Exit(1)
-		}
-	case "update":
-		if err := cmdUpdate(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "update: %v\n", err)
-			os.Exit(1)
-		}
-	case "view":
-		if err := cmdView(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "view: %v\n", err)
-			os.Exit(1)
-		}
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %q\n\n", os.Args[1])
-		printHelp()
-		os.Exit(1)
+		return
 	}
+	fmt.Fprintf(os.Stderr, "unknown command: %q\n\n", cmd)
+	printHelp()
+	os.Exit(1)
 }

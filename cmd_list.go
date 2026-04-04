@@ -15,6 +15,7 @@ func writeTaskList(w io.Writer, tasks []Task) {
 		if i > 0 {
 			fmt.Fprintln(w)
 		}
+		fmt.Fprintf(w, "Index: %d\n", i+1)
 		fmt.Fprintf(w, "Description: %s\n", t.Description)
 		fmt.Fprintf(w, "Current progress: %d\n", t.Progress)
 		fmt.Fprintf(w, "#steps: %d\n", t.Steps)

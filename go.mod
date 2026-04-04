@@ -1,3 +1,3 @@
-module taskmgr
+module deadline
 
 go 1.22

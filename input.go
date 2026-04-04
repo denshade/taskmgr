@@ -2,13 +2,18 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"strings"
 )
 
 func readLine(r *bufio.Reader) (string, error) {
 	line, err := r.ReadString('\n')
-	if err != nil {
+	s := strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"))
+	if err != nil && err != io.EOF {
 		return "", err
 	}
-	return strings.TrimSpace(line), nil
+	if err == io.EOF && s == "" {
+		return "", io.EOF
+	}
+	return s, nil
 }
