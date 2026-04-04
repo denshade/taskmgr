@@ -13,6 +13,31 @@ import (
 	"time"
 )
 
+func TestWinresIconUsesDeadlinePNG(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("winres", "winres.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		RT_GROUP_ICON map[string]map[string]string `json:"RT_GROUP_ICON"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	app, ok := v.RT_GROUP_ICON["APP"]
+	if !ok {
+		t.Fatal(`winres: missing RT_GROUP_ICON "APP"`)
+	}
+	const want = "../deadline.png"
+	if got := app["0000"]; got != want {
+		t.Fatalf("icon input: got %q, want %q", got, want)
+	}
+	pngPath := filepath.Join("winres", want)
+	if _, err := os.Stat(pngPath); err != nil {
+		t.Fatalf("icon file %q: %v", pngPath, err)
+	}
+}
+
 func TestHelpText(t *testing.T) {
 	s := helpText()
 	if !strings.HasPrefix(s, "deadline ") {
