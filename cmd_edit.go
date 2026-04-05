@@ -45,12 +45,42 @@ func editTask(r io.Reader, tasksPath string, idx1 int) error {
 	}
 
 	for {
+		fmt.Printf("Current progress[%d]: ", t.Progress)
+		line, err := readLine(br)
+		if err != nil {
+			return fmt.Errorf("read progress: %w", err)
+		}
+		if line == "" {
+			if err := validateProgress(t.Progress, t.Steps); err != nil {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				continue
+			}
+			break
+		}
+		p, err := strconv.Atoi(line)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Current progress must be an integer.")
+			continue
+		}
+		if err := validateProgress(p, t.Steps); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			continue
+		}
+		t.Progress = p
+		break
+	}
+
+	for {
 		fmt.Printf("#steps[%d]: ", t.Steps)
 		line, err := readLine(br)
 		if err != nil {
 			return fmt.Errorf("read #steps: %w", err)
 		}
 		if line == "" {
+			if err := validateProgress(t.Progress, t.Steps); err != nil {
+				fmt.Fprintf(os.Stderr, "%v\n", err)
+				continue
+			}
 			break
 		}
 		n, err := strconv.Atoi(line)
@@ -59,6 +89,10 @@ func editTask(r io.Reader, tasksPath string, idx1 int) error {
 			continue
 		}
 		t.Steps = n
+		if err := validateProgress(t.Progress, t.Steps); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			continue
+		}
 		break
 	}
 
@@ -88,32 +122,6 @@ func editTask(r io.Reader, tasksPath string, idx1 int) error {
 		if err := warnIfDeadlineInPast(os.Stderr, t.Deadline, time.Now()); err != nil {
 			return fmt.Errorf("deadline: %w", err)
 		}
-		break
-	}
-
-	for {
-		fmt.Printf("Current progress[%d]: ", t.Progress)
-		line, err := readLine(br)
-		if err != nil {
-			return fmt.Errorf("read progress: %w", err)
-		}
-		if line == "" {
-			if err := validateProgress(t.Progress, t.Steps); err != nil {
-				fmt.Fprintf(os.Stderr, "%v\n", err)
-				continue
-			}
-			break
-		}
-		p, err := strconv.Atoi(line)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Current progress must be an integer.")
-			continue
-		}
-		if err := validateProgress(p, t.Steps); err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-			continue
-		}
-		t.Progress = p
 		break
 	}
 

@@ -372,7 +372,7 @@ func TestEditTask(t *testing.T) {
 		if err := saveTasks(path, []Task{{Description: "old", Steps: 5, Progress: 0, Deadline: "2026-03-01"}}); err != nil {
 			t.Fatal(err)
 		}
-		in := strings.NewReader("new desc\n\n\n4\n")
+		in := strings.NewReader("new desc\n4\n\n\n")
 		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -391,7 +391,7 @@ func TestEditTask(t *testing.T) {
 		if err := saveTasks(path, []Task{{Description: "x", Steps: 2, Deadline: "2026-03-01"}}); err != nil {
 			t.Fatal(err)
 		}
-		in := strings.NewReader("\n\n\n2\n")
+		in := strings.NewReader("\n2\n\n\n")
 		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -429,7 +429,7 @@ func TestEditTask(t *testing.T) {
 		if err := saveTasks(path, []Task{{Description: "x", Steps: 5, Progress: 4, Deadline: "2026-01-01"}}); err != nil {
 			t.Fatal(err)
 		}
-		in := strings.NewReader("\n2\n\n\n2\n")
+		in := strings.NewReader("\n2\n2\n\n")
 		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -442,13 +442,32 @@ func TestEditTask(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects #steps below current progress then accepts higher", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "tasks.json")
+		if err := saveTasks(path, []Task{{Description: "x", Steps: 5, Progress: 4, Deadline: "2026-01-01"}}); err != nil {
+			t.Fatal(err)
+		}
+		in := strings.NewReader("\n\n2\n5\n\n")
+		if err := editTask(in, path, 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := loadTasks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Steps != 5 || got[0].Progress != 4 {
+			t.Fatalf("got %+v", got[0])
+		}
+	})
+
 	t.Run("rejects negative progress then accepts", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "tasks.json")
 		if err := saveTasks(path, []Task{{Description: "only", Steps: 3, Deadline: "2026-01-01"}}); err != nil {
 			t.Fatal(err)
 		}
-		in := strings.NewReader("\n\n\n-1\n0\n")
+		in := strings.NewReader("\n-1\n0\n\n\n")
 		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}
@@ -467,7 +486,7 @@ func TestEditTask(t *testing.T) {
 		if err := saveTasks(path, []Task{{Description: "only", Steps: 2, Deadline: "2026-01-01"}}); err != nil {
 			t.Fatal(err)
 		}
-		in := strings.NewReader("\n\n\n9\n1\n")
+		in := strings.NewReader("\n9\n1\n\n\n")
 		if err := editTask(in, path, 1); err != nil {
 			t.Fatal(err)
 		}

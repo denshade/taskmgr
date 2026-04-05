@@ -69,7 +69,7 @@ func TestEditTaskWritesHistoryCSV(t *testing.T) {
 	if err := saveTasks(path, []Task{{Description: "x", Steps: 3, Progress: 1, Deadline: "2026-01-01"}}); err != nil {
 		t.Fatal(err)
 	}
-	in := strings.NewReader("\n\n\n2\n")
+	in := strings.NewReader("\n2\n\n\n")
 	if err := editTask(in, path, 1); err != nil {
 		t.Fatal(err)
 	}
