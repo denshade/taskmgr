@@ -48,8 +48,70 @@ func milestoneDayOffset(k, steps, dDays int) int {
 	return (k - 1) * (dDays - 1) / (steps - 1)
 }
 
+// interpolatedExpectedProgressEndOfToday returns the ideal absolute progress by the end of the first
+// calendar day of the plan (today), aligned with appendTaskSchedule: cumulative targets when remaining
+// work exceeds dDays, otherwise linear interpolation from current progress toward the first remaining
+// milestone across the day offset to that milestone (when rem == 1, the milestone is on the last day).
+func interpolatedExpectedProgressEndOfToday(steps, progress, dDays int) float64 {
+	if dDays < 1 {
+		dDays = 1
+	}
+	if steps < 1 {
+		steps = 1
+	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress >= steps {
+		return float64(steps)
+	}
+	rem := steps - progress
+	if rem > dDays {
+		add := (rem + dDays - 1) / dDays // ceil(rem / dDays)
+		exp := progress + add
+		if exp > steps {
+			exp = steps
+		}
+		return float64(exp)
+	}
+	if dDays == 1 {
+		return float64(steps)
+	}
+	if rem == 1 {
+		// Single milestone on last day: interpolate from (0, progress) to (dDays-1, steps).
+		return float64(progress) + float64(steps-progress)/float64(dDays-1)
+	}
+	minOff := -1
+	for k := progress + 1; k <= steps; k++ {
+		j := k - progress
+		off := milestoneDayOffset(j, rem, dDays)
+		if minOff < 0 || off < minOff {
+			minOff = off
+		}
+	}
+	if minOff == 0 {
+		maxK := progress
+		for k := progress + 1; k <= steps; k++ {
+			j := k - progress
+			if milestoneDayOffset(j, rem, dDays) == 0 && k > maxK {
+				maxK = k
+			}
+		}
+		return float64(maxK)
+	}
+	firstK := steps
+	for k := progress + 1; k <= steps; k++ {
+		j := k - progress
+		if milestoneDayOffset(j, rem, dDays) == minOff {
+			firstK = k
+			break
+		}
+	}
+	return float64(progress) + float64(firstK-progress)/float64(minOff)
+}
+
 // appendTaskSchedule adds view lines for one task into byDay. Keys are YYYY-MM-DD in loc.
-// Only work left (steps - progress) is scheduled; labels [n] are still absolute step totals.
+// Only work left (steps - progress) is scheduled; labels [n/steps] are absolute step totals.
 // If remaining work > dDays, targets are cumulative (ceil) from current progress to steps—e.g.
 // 300 steps with 0 progress in 30 days yields [10], [20], … [300].
 // Otherwise each remaining milestone is placed on an interpolated day (remaining ≤ dDays).
@@ -87,7 +149,7 @@ func appendTaskSchedule(byDay map[string][]string, desc string, steps, progress,
 			prev = target
 			day := start.AddDate(0, 0, off)
 			key := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc).Format(time.DateOnly)
-			byDay[key] = append(byDay[key], fmt.Sprintf("%s [%d]", desc, target))
+			byDay[key] = append(byDay[key], fmt.Sprintf("%s %s", desc, progressLabel(target, steps)))
 		}
 		return
 	}
@@ -96,15 +158,57 @@ func appendTaskSchedule(byDay map[string][]string, desc string, steps, progress,
 		off := milestoneDayOffset(j, rem, dDays)
 		day := start.AddDate(0, 0, off)
 		key := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc).Format(time.DateOnly)
-		byDay[key] = append(byDay[key], fmt.Sprintf("%s [%d]", desc, k))
+		byDay[key] = append(byDay[key], fmt.Sprintf("%s %s", desc, progressLabel(k, steps)))
+	}
+}
+
+func writeBehindScheduleWarnings(w io.Writer, tasks []Task, start time.Time, loc *time.Location) {
+	for _, t := range tasks {
+		if t.AlertWhenDeltaAbove <= 0 {
+			continue
+		}
+		if strings.TrimSpace(t.Deadline) == "" {
+			continue
+		}
+		d, err := parseDeadline(t.Deadline)
+		if err != nil {
+			continue
+		}
+		endDay := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc)
+		if endDay.Before(start) {
+			continue
+		}
+		steps := t.Steps
+		if steps < 1 {
+			steps = 1
+		}
+		progress := t.Progress
+		if progress < 0 {
+			progress = 0
+		}
+		if progress >= steps {
+			continue
+		}
+		dDays := int(endDay.Sub(start)/(24*time.Hour)) + 1
+		interp := interpolatedExpectedProgressEndOfToday(steps, progress, dDays)
+		delta := interp - float64(progress)
+		if delta <= float64(t.AlertWhenDeltaAbove) {
+			continue
+		}
+		fmt.Fprintf(w, "Warning: task %q is behind the interpolated plan (progress %d, expected ≈ %.2f by end of today, delta %.2f; alert when delta above %d).\n",
+			t.Description, progress, interp, delta, t.AlertWhenDeltaAbove)
 	}
 }
 
 // writeViewSchedule prints each calendar day from today through lastDeadline (inclusive): a line "YYYY-MM-DD"
-// when nothing is scheduled, or one line per scheduled checkpoint "YYYY-MM-DD  <description> [n]".
+// when nothing is scheduled, or one line per scheduled checkpoint "YYYY-MM-DD  <description> [n/steps]".
 // When remaining steps (#steps − current progress) exceed the days until the deadline, n is the cumulative
 // total due by that day (spread with ceil). Otherwise n is each absolute milestone still to reach, on interpolated days.
-func writeViewSchedule(w io.Writer, tasks []Task, today time.Time) error {
+func progressLabel(current, total int) string {
+	return fmt.Sprintf("[%d/%d]", current, total)
+}
+
+func writeViewSchedule(w io.Writer, warnOut io.Writer, tasks []Task, today time.Time) error {
 	loc := today.Location()
 	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, loc)
 	last, err := latestDeadlineDay(tasks, loc)
@@ -113,6 +217,9 @@ func writeViewSchedule(w io.Writer, tasks []Task, today time.Time) error {
 	}
 	if last.Before(start) {
 		return fmt.Errorf("latest deadline %s is before today %s", last.Format(time.DateOnly), start.Format(time.DateOnly))
+	}
+	if warnOut != nil {
+		writeBehindScheduleWarnings(warnOut, tasks, start, loc)
 	}
 	byDay := make(map[string][]string)
 	for _, t := range tasks {
@@ -157,5 +264,5 @@ func cmdView(args []string) error {
 	if err != nil {
 		return err
 	}
-	return writeViewSchedule(os.Stdout, tasks, time.Now())
+	return writeViewSchedule(os.Stdout, os.Stderr, tasks, time.Now())
 }

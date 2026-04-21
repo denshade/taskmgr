@@ -65,14 +65,35 @@ func addTask(r io.Reader, tasksPath string) error {
 		break
 	}
 
+	var alertDelta int
+	for {
+		fmt.Print("Alert when delta above (steps, 0=off) [0]: ")
+		line, err := readLine(br)
+		if err != nil {
+			return fmt.Errorf("read alert when delta above: %w", err)
+		}
+		s := strings.TrimSpace(line)
+		if s == "" {
+			break
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 0 {
+			fmt.Fprintln(os.Stderr, "Must be a non-negative integer (or empty for 0).")
+			continue
+		}
+		alertDelta = n
+		break
+	}
+
 	tasks, err := loadTasks(tasksPath)
 	if err != nil {
 		return err
 	}
 	tasks = append(tasks, Task{
-		Description: desc,
-		Steps:       steps,
-		Deadline:    deadlineStr,
+		Description:         desc,
+		Steps:               steps,
+		Deadline:            deadlineStr,
+		AlertWhenDeltaAbove: alertDelta,
 	})
 	if err := saveTasks(tasksPath, tasks); err != nil {
 		return fmt.Errorf("write %s: %w", tasksPath, err)

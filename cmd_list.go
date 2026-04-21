@@ -24,6 +24,12 @@ func writeTaskList(w io.Writer, tasks []Task) {
 			deadline = "(none)"
 		}
 		fmt.Fprintf(w, "Deadline: %s\n", deadline)
+		alert := t.AlertWhenDeltaAbove
+		if alert == 0 {
+			fmt.Fprintln(w, "Alert when delta above: (off)")
+		} else {
+			fmt.Fprintf(w, "Alert when delta above: %d\n", alert)
+		}
 	}
 }
 

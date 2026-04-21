@@ -125,6 +125,24 @@ func editTask(r io.Reader, tasksPath string, idx1 int) error {
 		break
 	}
 
+	for {
+		fmt.Printf("Alert when delta above (0=off)[%d]: ", t.AlertWhenDeltaAbove)
+		line, err := readLine(br)
+		if err != nil {
+			return fmt.Errorf("read alert when delta above: %w", err)
+		}
+		if line == "" {
+			break
+		}
+		n, err := strconv.Atoi(line)
+		if err != nil || n < 0 {
+			fmt.Fprintln(os.Stderr, "Must be a non-negative integer (or Enter to keep the current value).")
+			continue
+		}
+		t.AlertWhenDeltaAbove = n
+		break
+	}
+
 	tasks[i] = t
 	if err := saveTasks(tasksPath, tasks); err != nil {
 		return fmt.Errorf("write %s: %w", tasksPath, err)

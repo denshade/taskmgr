@@ -10,10 +10,11 @@ import (
 const defaultTasksFile = "tasks.json"
 
 type Task struct {
-	Description string `json:"description"`
-	Progress    int    `json:"progress,omitempty"`
-	Steps       int    `json:"steps"`
-	Deadline    string `json:"deadline,omitempty"`
+	Description         string `json:"description"`
+	Progress            int    `json:"progress,omitempty"`
+	Steps               int    `json:"steps"`
+	Deadline            string `json:"deadline,omitempty"`
+	AlertWhenDeltaAbove int    `json:"alert_when_delta_above,omitempty"`
 }
 
 func loadTasks(path string) ([]Task, error) {
