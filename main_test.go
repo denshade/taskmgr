@@ -1010,6 +1010,29 @@ func TestWriteViewScheduleBehindWarning(t *testing.T) {
 	}
 }
 
+func TestWriteViewScheduleWarnsWhenDeltaEqualsThreshold(t *testing.T) {
+	loc := time.Local
+	today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+	tasks := []Task{{
+		Description:         "book",
+		Steps:               300,
+		Progress:            0,
+		Deadline:            "2026-04-30",
+		AlertWhenDeltaAbove: 10,
+	}}
+	var warn bytes.Buffer
+	if err := writeViewSchedule(&bytes.Buffer{}, &warn, tasks, today); err != nil {
+		t.Fatal(err)
+	}
+	ws := warn.String()
+	if !strings.Contains(ws, "Warning: task \"book\"") {
+		t.Fatalf("expected warning when delta equals threshold, got %q", ws)
+	}
+	if !strings.Contains(ws, "alert when delta >= 10") {
+		t.Fatalf("warning should use >= threshold wording: %q", ws)
+	}
+}
+
 func TestWriteViewScheduleNoWarningWhenAhead(t *testing.T) {
 	loc := time.Local
 	today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)

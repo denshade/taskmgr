@@ -192,10 +192,10 @@ func writeBehindScheduleWarnings(w io.Writer, tasks []Task, start time.Time, loc
 		dDays := int(endDay.Sub(start)/(24*time.Hour)) + 1
 		interp := interpolatedExpectedProgressEndOfToday(steps, progress, dDays)
 		delta := interp - float64(progress)
-		if delta <= float64(t.AlertWhenDeltaAbove) {
+		if delta < float64(t.AlertWhenDeltaAbove) {
 			continue
 		}
-		fmt.Fprintf(w, "Warning: task %q is behind the interpolated plan (progress %d, expected ≈ %.2f by end of today, delta %.2f; alert when delta above %d).\n",
+		fmt.Fprintf(w, "Warning: task %q is behind the interpolated plan (progress %d, expected ≈ %.2f by end of today, delta %.2f; alert when delta >= %d).\n",
 			t.Description, progress, interp, delta, t.AlertWhenDeltaAbove)
 	}
 }
