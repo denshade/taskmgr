@@ -594,37 +594,42 @@ func TestCmdDelete(t *testing.T) {
 }
 
 func TestWriteTaskList(t *testing.T) {
+	loc := time.Local
+
 	t.Run("empty", func(t *testing.T) {
 		var buf bytes.Buffer
-		writeTaskList(&buf, nil)
+		writeTaskList(&buf, nil, time.Date(2026, 4, 4, 0, 0, 0, 0, loc))
 		if got := strings.TrimSpace(buf.String()); got != "No tasks." {
 			t.Fatalf("got %q", got)
 		}
 	})
 
-	t.Run("one task with deadline", func(t *testing.T) {
+	t.Run("one task with deadline shows progress needed today", func(t *testing.T) {
 		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
 		writeTaskList(&buf, []Task{
 			{Description: "Do thing", Progress: 1, Steps: 3, Deadline: "2026-04-06"},
-		})
+		}, today)
 		want := strings.TrimSpace(`
 Index: 1
 Description: Do thing
 Current progress: 1
 #steps: 3
 Deadline: 2026-04-06
-Alert when delta above: (off)`)
+Alert when delta above: (off)
+Progress needed today: 0.67`)
 		if got := strings.TrimSpace(buf.String()); got != want {
 			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 		}
 	})
 
-	t.Run("two tasks second has no deadline", func(t *testing.T) {
+	t.Run("overdue task and task without deadline", func(t *testing.T) {
 		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
 		writeTaskList(&buf, []Task{
 			{Description: "a", Progress: 0, Steps: 2, Deadline: "2026-01-01", AlertWhenDeltaAbove: 4},
 			{Description: "b", Progress: 2, Steps: 2, Deadline: ""},
-		})
+		}, today)
 		want := strings.TrimSpace(`
 Index: 1
 Description: a
@@ -632,6 +637,7 @@ Current progress: 0
 #steps: 2
 Deadline: 2026-01-01
 Alert when delta above: 4
+Progress needed today: 2 (overdue)
 
 Index: 2
 Description: b
@@ -643,9 +649,88 @@ Alert when delta above: (off)`)
 			t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 		}
 	})
+
+	t.Run("done task shows done annotation", func(t *testing.T) {
+		var buf bytes.Buffer
+		today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
+		writeTaskList(&buf, []Task{
+			{Description: "finished", Progress: 3, Steps: 3, Deadline: "2026-04-10"},
+		}, today)
+		if got := buf.String(); !strings.Contains(got, "Progress needed today: 0 (done)") {
+			t.Fatalf("expected done annotation, got:\n%s", got)
+		}
+	})
+}
+
+func TestProgressNeededTodayLabel(t *testing.T) {
+	loc := time.Local
+	today := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+
+	tests := []struct {
+		name string
+		task Task
+		want string
+	}{
+		{
+			name: "no deadline omits line",
+			task: Task{Description: "x", Steps: 3, Progress: 0, Deadline: ""},
+			want: "",
+		},
+		{
+			name: "invalid deadline omits line",
+			task: Task{Description: "x", Steps: 3, Progress: 0, Deadline: "not-a-date"},
+			want: "",
+		},
+		{
+			name: "done annotation when progress at steps",
+			task: Task{Description: "x", Steps: 3, Progress: 3, Deadline: "2026-04-30"},
+			want: "0 (done)",
+		},
+		{
+			name: "overdue with remaining steps",
+			task: Task{Description: "x", Steps: 5, Progress: 2, Deadline: "2026-03-15"},
+			want: "3 (overdue)",
+		},
+		{
+			name: "linear rate book 300 over 30 days",
+			task: Task{Description: "book", Steps: 300, Progress: 0, Deadline: "2026-04-30"},
+			want: "10.00",
+		},
+		{
+			name: "linear rate bananas 3 over 6 days",
+			task: Task{Description: "bananas", Steps: 3, Progress: 0, Deadline: "2026-04-06"},
+			want: "0.50",
+		},
+		{
+			name: "fractional rate one step over six days",
+			task: Task{Description: "almost", Steps: 10, Progress: 9, Deadline: "2026-04-06"},
+			want: "0.17",
+		},
+		{
+			name: "rate accounts for current progress",
+			task: Task{Description: "rowing", Steps: 40, Progress: 12, Deadline: "2026-04-29"},
+			want: "0.97",
+		},
+		{
+			name: "deadline today still needs all remaining steps",
+			task: Task{Description: "today", Steps: 4, Progress: 1, Deadline: "2026-04-01"},
+			want: "3.00",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := progressNeededTodayLabel(tt.task, today); got != tt.want {
+				t.Fatalf("got %q want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestWriteTasksFromPath(t *testing.T) {
+	loc := time.Local
+	today := time.Date(2026, 4, 4, 0, 0, 0, 0, loc)
+
 	t.Run("prints tasks from file", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "tasks.json")
@@ -655,12 +740,15 @@ func TestWriteTasksFromPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		var buf bytes.Buffer
-		if err := writeTasksFromPath(&buf, path); err != nil {
+		if err := writeTasksFromPath(&buf, path, today); err != nil {
 			t.Fatal(err)
 		}
 		out := buf.String()
 		if !strings.Contains(out, "Index: 1") || !strings.Contains(out, "Description: x") {
 			t.Fatalf("output: %q", out)
+		}
+		if !strings.Contains(out, "Progress needed today:") {
+			t.Fatalf("expected progress needed today line, got: %q", out)
 		}
 	})
 
@@ -670,7 +758,7 @@ func TestWriteTasksFromPath(t *testing.T) {
 		if err := os.WriteFile(path, []byte("{"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeTasksFromPath(&bytes.Buffer{}, path); err == nil {
+		if err := writeTasksFromPath(&bytes.Buffer{}, path, today); err == nil {
 			t.Fatal("expected error")
 		}
 	})
